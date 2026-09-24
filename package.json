@@ -1,0 +1,32 @@
+{
+  "name": "factoria-agent-platform-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FactorIA Agent Platform POC - ElevenLabs Conversational AI + FactorIA Tool Layer",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "setup": "tsx scripts/setup-agent.ts",
+    "setup:dry-run": "tsx scripts/setup-agent.ts --dry-run"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.68.0",
+    "@elevenlabs/react": "^1.15.2",
+    "lucide-react": "^1.47.0",
+    "next": "16.3.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.8.0"
+  }
+}
