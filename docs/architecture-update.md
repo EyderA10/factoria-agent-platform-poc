@@ -2,6 +2,8 @@
 
 > Estado: validado a nivel técnico con la documentación oficial de ElevenLabs (Agents,
 > Webhook Tools, Widget, SDK React, Twilio/SIP, WhatsApp, signed URLs, post-call webhooks).
+> Fase 1 aplicada: webhook tool con auth por **selector de secretos** y endpoint **post-call
+> entrante con verificación HMAC**, ambos verificado de extremo a extremo (agente → tool → datos reales).
 
 ## 1. Flujo objetivo
 
@@ -44,8 +46,8 @@ Puntos validados del correo:
 
 | Flujo | Mecanismo |
 |---|---|
-| Agente → FactorIA Tool Layer | Header `Authorization: Bearer <secret>` fijado en el webhook tool (secretos de ElevenLabs). |
-| Post-call webhooks → FactorIA | HMAC `ElevenLabs-Signature` (verificar con `elevenlabs.webhooks.constructEvent`) + IP egress allowlist. |
+| Agente → FactorIA Tool Layer | Header `Authorization: Bearer <secret>` resuelto por **selector de secretos** de ElevenLabs (`request_header` con `secret_id`); el literal nunca queda en la config. |
+| Post-call webhooks → FactorIA | HMAC `ElevenLabs-Signature` firmado manualmente (`t=`/`v0=`, tolerancia 30 min) en `app/api/webhooks/elevenlabs` con `ELEVENLABS_WEBHOOK_SECRET` + IP egress allowlist. |
 | Navegador → ElevenLabs | Agente público (allowlist de dominio) **o** signed URL generada server-side (15 min). Nunca exponer `xi-api-key`. |
 | Identificación de usuario/sesión | Web: `userId` + `dynamicVariables` en `startSession`. WhatsApp inbound: initialization context / variables dinámicas. Phone inbound: Twilio personalization webhook. |
 
@@ -54,5 +56,6 @@ Puntos validados del correo:
 1. **Widget propio (no el hosted)**: demuestra que FactorIA puede construir su propia UI (requisito del correo).
 2. **Endpoint único `POST /api/tools/check-availability`** como webhook tool.
 3. **Provisioning vía API**: `scripts/setup-agent.ts` crea tool + agente de forma idempotente (`--dry-run` para auditar).
-4. **Post-call webhooks preparados** para logs/analítica/coste (`metadata.cost` en microcréditos) cuando se activen a nivel de workspace.
+4. **Post-call webhooks implementados**: `app/api/webhooks/elevenlabs` verifica HMAC y registra
+   transcripción/coste; la activación a nivel workspace de ElevenLabs (todo el tráfico) es lo que queda manual.
 5. **Multi-tenant**: `tenant_id` viaja en el payload de la tool; en producción se resuelve además por agente/entorno por cliente.

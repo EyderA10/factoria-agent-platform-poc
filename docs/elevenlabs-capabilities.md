@@ -17,7 +17,7 @@
 | Signed URLs para el widget | ✅ `getSignedUrl` | — | ✅ `app/api/elevenlabs/session` |
 | WebRTC desde el navegador | ✅ SDK React | — | ✅ widget propio |
 | Usuario/sesión desde el navegador (`userId`, variables dinámicas) | ✅ `startSession` params | — | ✅ |
-| Post-call webhooks (transcripción, audio, coste) | ✅ solicitud vía settings | ⏳ en curso | ✅ endpoint listo |
+| Post-call webhooks (transcripción, audio, coste) | ✅ solicitud vía settings | ⏳ en curso | ✅ `app/api/webhooks/elevenlabs` (HMAC) |
 | Logs/coste de llamadas (`metadata.cost`) | ✅ `conversation.get` | ✅ | ✅ en post-call |
 | Outbound call (voz) | ✅ `call.outerTaskOutboundCall` | ✅ | ✅ endpoint backend |
 | Telefonía: números Twilio/SIP (Vonage, Telnyx, Plivo, Bandwidth, Exotel) | ✅ import vía dashboard | ✅ | ⏳ según proveedor |
@@ -25,7 +25,7 @@
 | Transferencia a humano | ✅ system tool «Transfer to number» | ✅ | ⏳ data del cliente |
 | WhatsApp inbound (texto y voz) | ✅ import vía Meta WABA | ✅ | ⏳ requiere WABA |
 | WhatsApp outbound (templates aprobados) | ✅ | ✅ | ⏳ requiere templates |
-| Verificar HMAC de webhooks | ✅ `webhooks.constructEvent` | — | ⏳ |
+| Verificar HMAC de webhooks | ✅ `webhooks.constructEvent` | — | ✅ manual (`t=`/`v0=`, 30 min) en post-call |
 | Autenticación de agentes (allowlist / signed URLs / web) | ✅ | ✅ | ✅ allowlist+signed URL |
 
 ## 2. Qué NO se puede (o es manual)
@@ -53,5 +53,5 @@
 - **Todo lo reproducible por código**: `scripts/setup-agent.ts` (idempotente, `--dry-run` para auditar antes de aplicar).
 - **Sensible al cliente / variación**: mantener en el dashboard de ElevenLabs (voz fina, plantillas WhatsApp, teléfonos)
   y documentar en el checklist de onboarding.
-- Los secrets de la tool layer se referencian con **selector de secretos** (`secret_key:`) para nunca exponerlos
+- Los secrets de la tool layer se referencian con **selector de secretos** (`secret_id:`) para nunca exponerlos
   en el dashboard a terceros.

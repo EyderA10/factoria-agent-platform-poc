@@ -41,17 +41,26 @@ const env: Record<string, string | undefined> = { ...process.env, ...dotEnv, ...
 
 // ---------- CLI args ----------
 function parseArgs(argv: string[]) {
-  const opts: Record<string, string | boolean> = { dryRun: false, updateAgent: false };
+  const opts: Record<string, string | boolean> = {
+    dryRun: false,
+    updateAgent: false,
+    updateTool: false,
+    toolUrlExplicit: false,
+  };
   const positional: string[] = [];
   for (const arg of argv) {
     if (arg === "--dry-run") opts.dryRun = true;
     else if (arg === "--update-agent") opts.updateAgent = true;
+    else if (arg === "--update-tool") opts.updateTool = true;
     else if (arg === "--help") opts.help = true;
     else if (arg === "--agent-name") opts.agentName = "";
     else if (opts.agentName === "") opts.agentName = arg;
     else if (arg.startsWith("--agent-name=")) opts.agentName = arg.split("=")[1];
-    else if (arg.startsWith("--tool-url=")) opts.toolUrl = arg.split("=")[1];
-    else if (arg.startsWith("--secret=")) opts.secret = arg.split("=")[1];
+    else if (arg.startsWith("--tool-url=")) {
+      opts.toolUrl = arg.split("=")[1];
+      opts.toolUrlExplicit = true;
+    } else if (arg.startsWith("--secret=")) opts.secret = arg.split("=")[1];
+    else if (arg.startsWith("--secret-name=")) opts.secretName = arg.split("=")[1];
     else positional.push(arg);
   }
   return opts;
@@ -60,9 +69,12 @@ function parseArgs(argv: string[]) {
 const args = parseArgs(process.argv.slice(2));
 const dryRun = Boolean(args.dryRun);
 const updateAgent = Boolean(args.updateAgent);
+const updateTool = Boolean(args.updateTool);
 const agentName = String(args.agentName ?? "Factoria POC Agent");
 const toolUrl = String(args.toolUrl ?? env.NEXT_PUBLIC_FACTORIA_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const toolUrlExplicit = Boolean(args.toolUrlExplicit);
 const toolSecret = String(args.secret ?? env.FACTORIA_TOOL_SECRET ?? "factoria-secret-token-2026");
+const secretName = String(args.secretName ?? "FACTORIA_TOOL_SECRET");
 const apiKey = env.ELEVENLABS_API_KEY ?? "";
 
 const TOOL_NAME = "check_availability";
@@ -82,14 +94,19 @@ Reglas de comportamiento conversacional:
 7. Responde únicamente cuando el usuario se comunique, de forma breve y natural.
 8. Despídete de forma breve solo si el usuario se despide o pide terminar.`;
 
-function toolApiSchema(toolEndpoint: string) {
+/**
+ * El header Authorization usa un selector de secreto (`secret_id`) del secret store
+ * del workspace, de forma que el literal nunca queda expuesto en la config de la tool.
+ * En dry-run/dev sin secret se cae al literal para compatibilidad local.
+ */
+function toolApiSchema(toolEndpoint: string, secretId?: string) {
   return {
     url: `${toolEndpoint}/api/tools/check-availability`,
     method: "POST" as const,
     contentType: "application/json" as const,
-    requestHeaders: {
-      Authorization: `Bearer ${toolSecret}`,
-    },
+    requestHeaders: secretId
+      ? { Authorization: { secretId } }
+      : { Authorization: `Bearer ${toolSecret}` },
     requestBodySchema: {
       type: "object" as const,
       properties: {
@@ -109,6 +126,58 @@ function toolApiSchema(toolEndpoint: string) {
   };
 }
 
+/** JSON-schema del body (compartido entre SDK camelCase y REST snake_case). */
+function toolBodyJsonSchema() {
+  return {
+    type: "object",
+    properties: {
+      tenant_id: { type: "string", description: "Identificador del cliente/tenant FactorIA" },
+      user_name: { type: "string", description: "Nombre del usuario final" },
+      date: { type: "string", description: "Fecha de la consulta (p.ej. hoy o YYYY-MM-DD)" },
+      category: { type: "string", description: "Categoría de entrada consultada", enum: ["general", "premium", "vip"] },
+    },
+    required: ["category", "date"],
+  };
+}
+
+/** Crea o reutiliza un secret en el workspace de ElevenLabs y devuelve su id. */
+async function ensureToolSecret(client: ElevenLabsClient, name: string, value: string): Promise<string> {
+  const list = await client.conversationalAi.secrets.list();
+  const existing = list.secrets.find((s) => s.name === name);
+  if (existing) return existing.secretId;
+  const created = await client.conversationalAi.secrets.create({ name, value });
+  return created.secretId;
+}
+
+/** Devuelve la URL actual del webhook tool (para --update-tool sin --tool-url). */
+async function currentToolUrl(client: ElevenLabsClient, toolId: string): Promise<string> {
+  const data = await client.conversationalAi.tools.get(toolId);
+  const url = (data.toolConfig as { apiSchema?: { url?: string } }).apiSchema?.url;
+  if (!url) throw new Error(`No se pudo leer la URL de la tool ${toolId}`);
+  return url;
+}
+
+/** Patch REST (snake_case) de la api_schema del webhook tool. */
+function toolApiSchemaRawPatch(toolEndpoint: string, secretId: string) {
+  return {
+    tool_config: {
+      type: "webhook",
+      name: TOOL_NAME,
+      description:
+        "Consulta disponibilidad y precio de entradas del tenant. Úsala cuando el usuario pregunte por disponibilidad, precios u horarios.",
+      api_schema: {
+        url: `${toolEndpoint}/api/tools/check-availability`,
+        method: "POST",
+        content_type: "application/json",
+        request_headers: { Authorization: { secret_id: secretId } },
+        request_body_schema: toolBodyJsonSchema(),
+        response_timeout_secs: 30,
+        interruption_mode: "disable_during_tool_and_turn",
+      },
+    },
+  };
+}
+
 function log(title: string, lines: string[]) {
   const width = Math.max(title.length, ...lines.map((l) => l.length)) + 4;
   console.log(`\n${"─".repeat(width)}\n  ${title}\n${"─".repeat(width)}`);
@@ -125,7 +194,9 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
 --agent-name NAME    Nombre del agente (default: "Factoria POC Agent").
 --tool-url URL       Base URL del endpoint FactorIA (default: NEXT_PUBLIC_FACTORIA_BASE_URL).
 --secret SECRET      Override de FACTORIA_TOOL_SECRET.
+--secret-name NAME   Nombre del secret en el workspace de ElevenLabs (default: FACTORIA_TOOL_SECRET).
 --update-agent       Si el agente ya existe, forzar update (re-aplica prompt + tools).
+--update-tool        Si la tool ya existe, forzar update de su api_schema (auth con secret selector).
 --help               Esta ayuda.
 `);
     return;
@@ -136,7 +207,7 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
   console.log(`\nfactorIA POC · ElevenLabs provisioning\n`);
   console.log(`  agent  : ${agentName}`);
   console.log(`  tool   : ${TOOL_NAME} → ${toolVisibleUrl}`);
-  console.log(`  auth   : Bearer <FACTORIA_TOOL_SECRET>${secretLabel}`);
+  console.log(`  auth   : Authorization vía secret selector (secret_id:${secretName})${secretLabel}`);
   console.log(`  dry-run: ${dryRun ? "SÍ (no se ejecuta nada)" : "no"}\n`);
 
   if (!apiKey) {
@@ -154,10 +225,16 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
 
   const client = apiKey ? new ElevenLabsClient({ apiKey }) : null;
 
+  // Crea o reutiliza el secret del workspace y referencia la tool por secret_id,
+  // para que el Bearer nunca quede literal en la config de la tool.
+  // El valor del secret es el header COMPLETO (`Bearer <token>`), que ElevenLabs
+  // resolverá al enviar la llamada al webhook tool.
+  const toolSecretId = client ? await ensureToolSecret(client, secretName, `Bearer ${toolSecret}`) : undefined;
+
   if (dryRun || !client) {
     log("DRY-RUN: tool", [
       `POST ${toolVisibleUrl}`,
-      `headers: { Authorization: "Bearer <FACTORIA_TOOL_SECRET>" }`,
+      `headers: { Authorization: { secret_id: "${secretName}" } } (selector de secreto)`,
       `body: { tenant_id?, user_name?, date, category }`,
     ]);
     const draft = buildRestConfig(TOOL_ID);
@@ -168,9 +245,25 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
   // ---- 1. Tool ----
   let toolId: string;
   const existingTool = (await findAllTools(client)).find((t) => t.name === TOOL_NAME);
-  if (existingTool) {
+  if (existingTool && updateTool) {
     toolId = existingTool.id;
-    log("TOOL", ["Ya existe: " + TOOL_NAME + " → id " + toolId, "Se reutiliza (no se modifica)."]);
+    const endpoint = toolUrlExplicit ? toolUrl : await currentToolUrl(client, toolId);
+    if (!toolSecretId) {
+      log("ERROR", ["No se pudo obtener el secret del workspace para el header de la tool."]);
+      process.exit(1);
+    }
+    await elevenlabsRest("PATCH", `/v1/convai/tools/${toolId}`, toolApiSchemaRawPatch(endpoint, toolSecretId));
+    log("TOOL", [
+      `Actualizada "${TOOL_NAME}" → id ${toolId}`,
+      `URL: ${endpoint}/api/tools/check-availability`,
+      `Auth: Authorization: { secret_id: ${secretName} } (sin literal)`,
+    ]);
+  } else if (existingTool) {
+    toolId = existingTool.id;
+    log("TOOL", [
+      "Ya existe: " + TOOL_NAME + " → id " + toolId,
+      "Se reutiliza (no se modifica). Usa --update-tool para migrar su auth al secret selector.",
+    ]);
   } else {
     const created = await client.conversationalAi.tools.create({
       toolConfig: {
@@ -178,11 +271,15 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
         name: TOOL_NAME,
         description:
           "Consulta disponibilidad y precio de entradas del tenant. Úsala cuando el usuario pregunte por disponibilidad, precios u horarios.",
-        apiSchema: toolApiSchema(toolUrl),
+        apiSchema: toolApiSchema(toolUrl, toolSecretId),
       },
     });
     toolId = created.id;
-    log("TOOL", ["Creada " + TOOL_NAME + " → id " + toolId, `URL: ${toolVisibleUrl}`, `Auth: Authorization: Bearer <secreto>`]);
+    log("TOOL", [
+      "Creada " + TOOL_NAME + " → id " + toolId,
+      `URL: ${toolVisibleUrl}`,
+      `Auth: Authorization: { secret_id: ${secretName} } (sin literal)`,
+    ]);
   }
 
   // ---- 2. Agent ----
