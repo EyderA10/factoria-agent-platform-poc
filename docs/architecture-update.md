@@ -8,25 +8,22 @@
 
 ## 1. Flujo objetivo
 
-```
-Web [React SDK + signed URL] ─┐
-WhatsApp [Meta WABA → ElevenLabs] ├─► ElevenLabs Conversational AI
-Phone [Twilio / SIP → ElevenLabs] ─┘   (STT · LLM · TTS · WebRTC)
-                                             │  webhook tool (HTTP POST + Bearer)
-                                             ▼
-                              ┌─────────────────────────────┐
-                              │  FactorIA Tool Layer         │
-                              │  (Next.js: Zod · Auth · API) │
-                              └───────┬──────────┬───────────┘
-                                      │          │
-                    tools reutilizables│          │mismos zod-schemas
-                    (agente ElevenLabs)│          │como tool() de Vercel AI SDK
-                                      ▼          ▼
-                            Sistemas/Apps       Agentes internos
-                            del cliente         (Vercel Eve / AI SDK)
-                                      │
-                                      ▼
-   ←── post-call webhooks (HMAC): transcript, análisis, coste → FactorIA (logs/CRM)
+```mermaid
+flowchart LR
+    subgraph Canales
+        WEB["Web · React SDK + signed URL"]
+        WA["WhatsApp · Meta WABA"]
+        PHONE["Teléfono · Twilio / SIP"]
+    end
+    WEB --> ELEV
+    WA --> ELEV
+    PHONE --> ELEV
+    ELEV["ElevenLabs Conversational AI · STT · LLM · TTS · WebRTC"]
+    ELEV -- "webhook tool (HTTP POST + Bearer)" --> FACT
+    FACT["FactorIA Tool Layer · Next.js · Zod · Auth"]
+    FACT --> CLIENT["Sistemas / Apps del cliente"]
+    FACT --> INTERNAL["Agentes internos · Vercel AI SDK"]
+    ELEV -. "post-call (HMAC): transcript · análisis · coste" .-> LOGS["FactorIA · Logs / CRM"]
 ```
 
 Puntos validados:
