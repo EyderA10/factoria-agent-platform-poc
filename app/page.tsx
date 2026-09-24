@@ -5,7 +5,7 @@ const STEPS = [
   {
     n: "01",
     title: "Canales de entrada",
-    body: "Web chat, WhatsApp (Meta WABA) y llamadas (Twilio / SIP). Un solo agente omnicanal.",
+    body: "Web chat (probado) · WhatsApp (Meta WABA) y llamadas (Twilio / SIP) requieren credenciales del cliente. Un solo agente omnicanal.",
   },
   {
     n: "02",
@@ -84,7 +84,7 @@ export default function HomePage() {
                 <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-emerald-400">
                   npm run setup
                 </span>
-                Provisiona agente + tool vía SDK (idempotente).
+                Provisiona por cliente: `npm run setup -- --client {"<id>"}` (idempotente).
               </li>
             </ul>
             <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-3 font-mono text-[10px] leading-relaxed text-slate-500">
@@ -104,7 +104,7 @@ export default function HomePage() {
           <p>
             UI propia construida sobre <code className="font-mono text-emerald-400">@elevenlabs/react</code> ({" "}
             <code className="font-mono">useConversation</code> + <code className="font-mono">ConversationProvider</code>
-            ). Usa downloader signed URL del servidor. Abajo tienes el widget activo; si no está configurado, usa el
+            ). Usa la signed URL generada por el servidor. Abajo tienes el widget activo; si no está configurado, usa el
             modo demo etiquetado.
           </p>
           {agentId ? (
