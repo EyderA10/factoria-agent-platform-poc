@@ -69,9 +69,6 @@
 
 ## 7. WhatsApp
 
-> El número debe ser un **WhatsApp Business** activo. Se requiere portafolio de negocio de Meta
-> (o se crea uno por el cliente) y número de teléfono **sin uso previo** de WhatsApp para la conexión directa.
-
 | Pregunta | Respuesta |
 |---|---|
 | ¿Tienen un número de WhatsApp Business activo? | ☐ Sí ☐ No |

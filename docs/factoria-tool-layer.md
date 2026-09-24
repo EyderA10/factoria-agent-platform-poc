@@ -53,7 +53,7 @@ lib/tools/check-availability.ts            → schema zod + handler (lógica pur
 lib/tools/registry.ts                      → tools como `tool()` de Vercel AI SDK (registry)
 lib/tools/index.ts                         → re-exporta el registry
 app/api/poc/test-tool/route.ts             → mismo handler SIN exponer secret (demo UI)
-scripts/setup-agent.ts                     → ELEVA el contrato a ElevenLabs (tool + agente + secret + webhook post-call)
+scripts/setup-agent.ts                     → ELEVA el contrato a ElevenLabs por cliente (`--client <id>`, secret + tool + agente + webhook post-call)
 app/api/webhooks/elevenlabs/route.ts       → post-call entrante con verificación HMAC (webhook workspace)
 ```
 
@@ -72,8 +72,6 @@ const checkAvailabilityTool = tool({
   execute: async (args) => checkAvailability(args),
 });
 ```
-
-> En Vercel AI SDK v7 el campo es **`inputSchema`** (antiguo `parameters` quedó obsoleto).
 
 Beneficios: un solo contrato → el agente de ElevenLabs y los agentes internos (p.ej. Vercel Eve)
 comparten exactamente las mismas tools, validaciones y mensajes de error.

@@ -85,7 +85,7 @@ Copia `.env.example` → `.env.local` y completa:
 | `npm run dev` | servidor de desarrollo |
 | `npm run build` | build de producción |
 | `npm run typecheck` | tipos (`tsc --noEmit`) |
-| `npm run setup` | provisiona tool (secret selector) + agente en ElevenLabs (`--update-tool`, `--update-agent`, `--enable-webhook`) |
+| `npm run setup` | provisiona por cliente: tool (secret selector) + agente + post-call (`-- --client <id>`, `--list-clients`, `--update-tool`, `--update-agent`, `--enable-webhook`) |
 
 ## Validado y conocido
 

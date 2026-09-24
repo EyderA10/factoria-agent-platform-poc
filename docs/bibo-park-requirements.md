@@ -13,8 +13,8 @@
 | RF4 | Responder en **español**, tono cercano y claro | `language: "es"` + prompt |
 | RF5 | Identificar al usuario por su **nombre** | campo `user_name` |
 | RF6 | Funcionar **Web** (widget) | widget real sobre `@elevenlabs/react` |
-| RF7 | Funcionar por **llamada telefónica** | outbound endpoint + Twilio/SIP (requiere credenciales) |
-| RF8 | Funcionar por **WhatsApp** | requiere Meta WABA + número (ver docs/elevenlabs-capabilities.md) |
+| RF7 | Funcionar por **llamada telefónica** | outbound endpoint + Twilio (recomendado) / SIP; requiere número y billing del cliente |
+| RF8 | Funcionar por **WhatsApp** | import WABA con cuenta Meta/Facebook (admin) + número sin uso previo (ver docs/elevenlabs-capabilities.md) |
 | RF9 | Entregar un **mensaje inicial** de presentación | `firstMessage` |
 | RF10 | **Transferir a humano** si el usuario lo pide | system tool «Transfer to number» (datos del cliente) |
 | RF11 | Registrar cada conversación para **mejora y auditoría** | post-call webhook + `metadata.cost` |

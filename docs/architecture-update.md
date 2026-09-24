@@ -29,7 +29,7 @@ Phone [Twilio / SIP → ElevenLabs] ─┘   (STT · LLM · TTS · WebRTC)
    ←── post-call webhooks (HMAC): transcript, análisis, coste → FactorIA (logs/CRM)
 ```
 
-Puntos validados del correo:
+Puntos validados:
 
 - **ElevenLabs actúa como infraestructura** (agente, STT/TTS, telefonía, WhatsApp). FactorIA conserva la
   experiencia (UI propia), la integración (tools) y la lógica del cliente.
@@ -54,10 +54,16 @@ Puntos validados del correo:
 
 ## 3. Decisiones de la POC
 
-1. **Widget propio (no el hosted)**: demuestra que FactorIA puede construir su propia UI (requisito del correo).
+1. **Widget propio (no el hosted)**: demuestra que FactorIA puede construir su propia UI.
 2. **Endpoint único `POST /api/tools/check-availability`** como webhook tool.
-3. **Provisioning vía API**: `scripts/setup-agent.ts` crea tool + agente de forma idempotente (`--dry-run` para auditar).
+3. **Provisioning vía API por cliente**: `scripts/setup-agent.ts -- --client <id>` lee
+   `scripts/clients/<id>.json` (prompt, tool, secret, voz) y crea/reutiliza tool + agente de forma
+   idempotente (`--dry-run` para auditar).
 4. **Post-call webhooks activos**: `app/api/webhooks/elevenlabs` verifica HMAC y registra
    transcripción/coste; el webhook de workspace se crea/ata con `npm run setup -- --enable-webhook`
    (evento `transcript`). Validado con un evento real (`post_call_transcription` → `cost` en microcréditos).
-5. **Multi-tenant**: `tenant_id` viaja en el payload de la tool; en producción se resuelve además por agente/entorno por cliente.
+5. **Multi-tenant / provisioning por agente**: `scripts/setup-agent.ts -- --client <id>`
+   automatiza por cliente el secret, la tool, el agente y el post-call (validado E2E con Bibo).
+   El contenido por cliente (prompt, datos, esquema de tools, voz y canales Twilio/WhatsApp/web)
+   se parametriza en producción vía el checklist de onboarding; `tenant_id` viaja en el payload
+   de la tool y las credenciales viven en el secret store del workspace.

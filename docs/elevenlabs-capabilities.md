@@ -20,7 +20,7 @@
 | Post-call webhooks (transcripción, audio, coste) | ✅ solicitud vía settings (`webhooks` API) | ✅ | ✅ webhook workspace activo (`--enable-webhook`) + HMAC |
 | Logs/coste de llamadas (`metadata.cost`) | ✅ `conversation.get` | ✅ | ✅ evento `post_call_transcription` con `cost` registrado |
 | Outbound call (voz) | ✅ `call.outerTaskOutboundCall` | ✅ | ✅ endpoint backend |
-| Telefonía: números Twilio/SIP (Vonage, Telnyx, Plivo, Bandwidth, Exotel) | ✅ import vía dashboard | ✅ | ⏳ según proveedor |
+| Telefonía: Twilio (**recomendada**) · SIP · Vonage, Telnyx, Plivo, Bandwidth, Exotel | ✅ Twilio vía API (`phone-numbers`) · resto por dashboard | ✅ | ⏳ según proveedor |
 | Asignar agente a un número entrante | ✅ vía dashboard (agent → phone) | ✅ | ⏳ depende de credenciales |
 | Transferencia a humano | ✅ system tool «Transfer to number» | ✅ | ⏳ data del cliente |
 | WhatsApp inbound (texto y voz) | ✅ import vía Meta WABA | ✅ | ⏳ requiere WABA |
@@ -30,9 +30,13 @@
 
 ## 2. Qué NO se puede (o es manual)
 
-- **WhatsApp**: requiere Meta Business portfolio + número sin uso previo + método de pago en WhatsApp Manager.
-  No puede crearse 100% vía API; implica pasos manuales del cliente. Outbound solo con plantillas aprobadas por Meta.
-- **Números de teléfono**: Twilio es proveedor externo (cuenta propia); la conexión (número → agente) se hace en el dashboard.
+- **WhatsApp**: el import se hace en *Integrations* iniciando sesión con la cuenta de **Meta/Facebook
+  Business** (se requieren permisos de administrador); necesita portafolio + número **sin uso previo**
+  de WhatsApp + método de pago en WhatsApp Manager. No puede crearse 100% vía API; implica pasos
+  manuales del cliente. Outbound solo con plantillas aprobadas por Meta.
+- **Números de teléfono**: Twilio es la opción recomendada (integración nativa inbound/outbound + SMS,
+  importable por API); el resto de proveedores (SIP, Vonage, Telnyx, Plivo, Bandwidth, Exotel) se
+  conectan por dashboard. La asignación (número → agente) se hace desde la consola del agente.
 - **Grabación de llamadas**: se habilita por cliente (workspace/settings), no vía SDK; se entrega vía post-call webhook (audio).
 - **Voz en el bot de voz de Telegram**: no soportada por ElevenLabs; usar texto (widget/Tool Layer) o Telefonía/WhatsApp.
 - **Enrutamiento CRM avanzado**: es responsabilidad de FactorIA (Tool Layer), no de ElevenLabs.
@@ -50,7 +54,9 @@
 
 ## 4. Forma de trabajo recomendada
 
-- **Todo lo reproducible por código**: `scripts/setup-agent.ts` (idempotente, `--dry-run` para auditar antes de aplicar).
+- **Mecanismo reproducible por código**: `scripts/setup-agent.ts` (idempotente, `--dry-run`); cada cliente
+  tiene su config en `scripts/clients/<id>.json` (prompt, tool, secret, voz) y se provisiona con
+  `-- --client <id>`. El contenido por cliente se parametriza vía checklist antes de aplicarse.
 - **Sensible al cliente / variación**: mantener en el dashboard de ElevenLabs (voz fina, plantillas WhatsApp, teléfonos)
   y documentar en el checklist de onboarding.
 - Los secrets de la tool layer se referencian con **selector de secretos** (`secret_id:`) para nunca exponerlos

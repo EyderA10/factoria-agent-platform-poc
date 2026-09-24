@@ -1,22 +1,32 @@
 /**
- * Provisiona en ElevenLabs todo lo necesario para la POC:
- *   1. Webhook tool `check_availability` (apunta al endpoint de FactorIA con Bearer token).
- *   2. Agente `Factoria POC Agent` que referencia la tool.
+ * Provisiona en ElevenLabs todo lo necesario por CLIENTE:
+ *   1. Webhook tool (apunta al endpoint de FactorIA con Bearer token resuelto por
+ *      secret selector del workspace).
+ *   2. Agente que referencia la tool.
+ *   3. (opcional) Post-call webhook atado en los settings de ConvAI.
+ *
+ * La config de cada cliente vive en `scripts/clients/<id>.json` (ver `_template.json`
+ * y `_README.md`). Sin `--client` se usa la config por defecto de la POC (Bibo), por lo
+ * que el comportamiento histórico `npm run setup` se mantiene igual.
  *
  * Uso:
- *   npm run setup            # crea o reutiliza tool + agente
- *   npm run setup -- --dry-run --agent-name "Mi Agente" --tool-url https://casa.vercel.app
- *   npm run setup -- --update-agent
+ *   npm run setup                        # config por defecto (Bibo / "Factoria POC Agent")
+ *   npm run setup -- --client bibo       # aprovisiona idempotente usando scripts/clients/bibo.json
+ *   npm run setup -- --client bibo --dry-run
+ *   npm run setup -- --list-clients
+ *   npm run setup -- --update-agent --update-tool --enable-webhook
  *   npm run setup -- --help
  *
- * Idempotente: si la tool/agente ya existen por nombre, los reutiliza (--update-agent fuerza update).
- * El secreto Bearer se lee de FACTORIA_TOOL_SECRET (.env / .env.local), igual que el endpoint.
+ * Idempotente: si la tool/agente ya existen por nombre, los reutiliza (--update-* fuerza update).
+ * Priority de valores: CLI flags > env > config del cliente > defaults.
  */
 import { ElevenLabsClient, ElevenLabs } from "@elevenlabs/elevenlabs-js";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { z } from "zod";
 
 const cwd = process.cwd();
+const CLIENTS_DIR = resolve(cwd, "scripts/clients");
 
 // ---------- tiny .env.local loader (sin dependencias extra) ----------
 function loadEnvFile(file: string): Record<string, string> {
@@ -46,46 +56,125 @@ function parseArgs(argv: string[]) {
     updateAgent: false,
     updateTool: false,
     enableWebhook: false,
+    listClients: false,
+    help: false,
     toolUrlExplicit: false,
   };
-  const positional: string[] = [];
+  let pendingKey: string | null = null;
   for (const arg of argv) {
-    if (arg === "--dry-run") opts.dryRun = true;
-    else if (arg === "--update-agent") opts.updateAgent = true;
-    else if (arg === "--update-tool") opts.updateTool = true;
-    else if (arg === "--enable-webhook") opts.enableWebhook = true;
-    else if (arg.startsWith("--webhook-url=")) opts.webhookUrl = arg.split("=")[1];
-    else if (arg === "--help") opts.help = true;
-    else if (arg === "--agent-name") opts.agentName = "";
-    else if (opts.agentName === "") opts.agentName = arg;
-    else if (arg.startsWith("--agent-name=")) opts.agentName = arg.split("=")[1];
-    else if (arg.startsWith("--tool-url=")) {
-      opts.toolUrl = arg.split("=")[1];
-      opts.toolUrlExplicit = true;
-    } else if (arg.startsWith("--secret=")) opts.secret = arg.split("=")[1];
-    else if (arg.startsWith("--secret-name=")) opts.secretName = arg.split("=")[1];
-    else positional.push(arg);
+    if (arg.startsWith("--")) {
+      pendingKey = null;
+      const eq = arg.indexOf("=");
+      const key = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
+      const value = eq === -1 ? "" : arg.slice(eq + 1);
+      switch (key) {
+        case "dry-run": opts.dryRun = true; break;
+        case "update-agent": opts.updateAgent = true; break;
+        case "update-tool": opts.updateTool = true; break;
+        case "enable-webhook": opts.enableWebhook = true; break;
+        case "list-clients": opts.listClients = true; break;
+        case "help": opts.help = true; break;
+        case "agent-name": value ? (opts.agentName = value) : (pendingKey = "agentName"); break;
+        case "client": value ? (opts.client = value) : (pendingKey = "client"); break;
+        case "tool-url":
+          if (value) { opts.toolUrl = value; opts.toolUrlExplicit = true; } else pendingKey = "toolUrl";
+          break;
+        case "webhook-url": value ? (opts.webhookUrl = value) : (pendingKey = "webhookUrl"); break;
+        case "secret": value ? (opts.secret = value) : (pendingKey = "secret"); break;
+        case "secret-name": value ? (opts.secretName = value) : (pendingKey = "secretName"); break;
+        default: break;
+      }
+    } else if (pendingKey) {
+      opts[pendingKey] = arg;
+      pendingKey = null;
+    }
   }
   return opts;
 }
 
-const args = parseArgs(process.argv.slice(2));
-const dryRun = Boolean(args.dryRun);
-const updateAgent = Boolean(args.updateAgent);
-const updateTool = Boolean(args.updateTool);
-const enableWebhook = Boolean(args.enableWebhook);
-const agentName = String(args.agentName ?? "Factoria POC Agent");
-const toolUrl = String(args.toolUrl ?? env.NEXT_PUBLIC_FACTORIA_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
-const toolUrlExplicit = Boolean(args.toolUrlExplicit);
-const webhookUrl = String(args.webhookUrl ?? `${toolUrl}/api/webhooks/elevenlabs`).replace(/\/$/, "");
-const toolSecret = String(args.secret ?? env.FACTORIA_TOOL_SECRET ?? "factoria-secret-token-2026");
-const secretName = String(args.secretName ?? "FACTORIA_TOOL_SECRET");
-const apiKey = env.ELEVENLABS_API_KEY ?? "";
+// ---------- Config por cliente (scripts/clients/<id>.json) ----------
+const schemaProp = z.object({
+  type: z.union([
+    z.literal("boolean"),
+    z.literal("string"),
+    z.literal("integer"),
+    z.literal("number"),
+    z.array(z.string()),
+  ]),
+  description: z.string().optional(),
+  enum: z.array(z.string()).optional(),
+});
+const ClientFileSchema = z.object({
+  id: z.string().min(1),
+  agentName: z.string().optional(),
+  baseUrl: z.string().optional(),
+  language: z.string().optional(),
+  timezone: z.string().optional(),
+  firstMessage: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  ttsModel: z.string().optional(),
+  enableWebhook: z.boolean().optional(),
+  secret: z.object({ name: z.string().optional(), value: z.string().optional() }).optional(),
+  tool: z
+    .object({
+      name: z.string().optional(),
+      url: z.string().optional(),
+      description: z.string().optional(),
+      requestBodySchema: z
+        .object({ properties: z.record(z.string(), schemaProp).optional(), required: z.array(z.string()).optional() })
+        .optional(),
+    })
+    .optional(),
+});
+type ClientFile = {
+  id: string;
+  agentName?: string;
+  baseUrl?: string;
+  language?: string;
+  timezone?: string;
+  firstMessage?: string;
+  systemPrompt?: string;
+  ttsModel?: string;
+  enableWebhook?: boolean;
+  secret?: { name?: string; value?: string };
+  tool?: {
+    name?: string;
+    url?: string;
+    description?: string;
+    requestBodySchema?: { properties?: Record<string, SchemaProp>; required?: string[] };
+  };
+};
+type SchemaProp = {
+  type: "boolean" | "string" | "integer" | "number" | string[];
+  description?: string;
+  enum?: string[];
+};
 
-const TOOL_NAME = "check_availability";
-const TOOL_ID = "factoria_check_availability";
+function clientFile(id: string): string {
+  return join(CLIENTS_DIR, `${id}.json`);
+}
 
-const SYSTEM_PROMPT = `Eres el agente omnicanal de FactorIA para el cliente "${agentName}".
+function loadClientConfig(id: string): ClientFile {
+  const file = clientFile(id);
+  if (!existsSync(file)) {
+    const available = listClientIds().join(", ") || "(ninguno)";
+    throw new Error(`No existe el cliente "${id}" en scripts/clients/. Disponibles: ${available}`);
+  }
+  return ClientFileSchema.parse(JSON.parse(readFileSync(file, "utf8"))) as unknown as ClientFile;
+}
+
+function listClientIds(): string[] {
+  if (!existsSync(CLIENTS_DIR)) return [];
+  return readdirSync(CLIENTS_DIR)
+    .filter((f) => f.endsWith(".json") && !f.startsWith("_"))
+    .map((f) => f.replace(/\.json$/, ""))
+    .sort();
+}
+
+// ---------- Defaults (equivalen a la config original del POC) ----------
+const DEFAULT_FIRST_MESSAGE =
+  "¡Hola! Soy el agente de FactorIA. ¿En qué puedo ayudarte? Puedo consultarte disponibilidad y precios.";
+const DEFAULT_SYSTEM_PROMPT = `Eres el agente omnicanal de FactorIA para el cliente "{{agentName}}".
 
 Normas de uso de la tool check_availability:
 1. Cuando el usuario pregunte por disponibilidad, precio u horarios de entradas/tickets, llama SIEMPRE a la tool check_availability.
@@ -99,49 +188,128 @@ Reglas de comportamiento conversacional:
 7. Responde únicamente cuando el usuario se comunique, de forma breve y natural.
 8. Despídete de forma breve solo si el usuario se despide o pide terminar.`;
 
+const DEFAULT_TOOL_DESCRIPTION =
+  "Consulta disponibilidad y precio de entradas del tenant. Úsala cuando el usuario pregunte por disponibilidad, precios u horarios.";
+
+const apiKey = env.ELEVENLABS_API_KEY ?? "";
+
+const DEFAULT_BODY_SCHEMA: BodySchema = {
+  type: "object",
+  properties: {
+    tenant_id: { type: "string", description: "Identificador del cliente/tenant FactorIA" },
+    user_name: { type: "string", description: "Nombre del usuario final" },
+    date: { type: "string", description: "Fecha de la consulta (p.ej. hoy o YYYY-MM-DD)" },
+    category: { type: "string", description: "Categoría de entrada consultada", enum: ["general", "premium", "vip"] },
+  },
+  required: ["category", "date"],
+};
+
+type BodySchema = {
+  type: "object";
+  properties: Record<string, SchemaProp>;
+  required?: string[];
+};
+
+type ResolvedConfig = {
+  clientId: string;
+  agentName: string;
+  baseUrl: string;
+  toolUrl: string;
+  webhookUrl: string;
+  enableWebhook: boolean;
+  secretName: string;
+  toolSecret: string;
+  language: string;
+  timezone: string;
+  firstMessage: string;
+  systemPrompt: string;
+  ttsModel: string;
+  tool: {
+    name: string;
+    url: string;
+    description: string;
+    requestBodySchema: BodySchema;
+  };
+};
+
+function str(v: string | boolean | undefined): string {
+  return v === undefined ? "" : String(v).trim();
+}
+
+function resolveConfig(args: Record<string, string | boolean>, file?: ClientFile): ResolvedConfig {
+  const agentName = str(args.agentName) || file?.agentName || "Factoria POC Agent";
+  const baseUrl = (
+    str(args.toolUrl) || str(env.NEXT_PUBLIC_FACTORIA_BASE_URL) || file?.baseUrl || "http://localhost:3000"
+  ).replace(/\/$/, "");
+  const toolUrl = args.toolUrlExplicit
+    ? `${baseUrl}/api/tools/check-availability`
+    : file?.tool?.url || `${baseUrl}/api/tools/check-availability`;
+  const webhookUrl = (str(args.webhookUrl) || `${baseUrl}/api/webhooks/elevenlabs`).replace(/\/$/, "");
+  const secretName = str(args.secretName) || file?.secret?.name || "FACTORIA_TOOL_SECRET";
+  const toolSecret = str(args.secret) || env.FACTORIA_TOOL_SECRET || file?.secret?.value || "factoria-secret-token-2026";
+  const requestBodySchema: BodySchema = file?.tool?.requestBodySchema
+    ? { type: "object", properties: file.tool.requestBodySchema.properties ?? {}, required: file.tool.requestBodySchema.required }
+    : DEFAULT_BODY_SCHEMA;
+
+  return {
+    clientId: file?.id || "default",
+    agentName,
+    baseUrl,
+    toolUrl,
+    webhookUrl,
+    enableWebhook: Boolean(args.enableWebhook) || Boolean(file?.enableWebhook),
+    secretName,
+    toolSecret,
+    language: file?.language || "es",
+    timezone: file?.timezone || "America/Bogota",
+    firstMessage: file?.firstMessage || DEFAULT_FIRST_MESSAGE,
+    systemPrompt: (file?.systemPrompt || DEFAULT_SYSTEM_PROMPT).split("{{agentName}}").join(agentName),
+    ttsModel: file?.ttsModel || "eleven_flash_v2_5",
+    tool: {
+      name: file?.tool?.name || "check_availability",
+      url: toolUrl,
+      description: file?.tool?.description || DEFAULT_TOOL_DESCRIPTION,
+      requestBodySchema,
+    },
+  };
+}
+
 /**
  * El header Authorization usa un selector de secreto (`secret_id`) del secret store
  * del workspace, de forma que el literal nunca queda expuesto en la config de la tool.
  * En dry-run/dev sin secret se cae al literal para compatibilidad local.
  */
-function toolApiSchema(toolEndpoint: string, secretId?: string) {
+function toolApiSchema(cfg: ResolvedConfig, secretId?: string) {
   return {
-    url: `${toolEndpoint}/api/tools/check-availability`,
+    url: cfg.tool.url,
     method: "POST" as const,
     contentType: "application/json" as const,
     requestHeaders: secretId
       ? { Authorization: { secretId } }
-      : { Authorization: `Bearer ${toolSecret}` },
-    requestBodySchema: {
-      type: "object" as const,
-      properties: {
-        tenant_id: { type: "string" as const, description: "Identificador del cliente/tenant FactorIA" },
-        user_name: { type: "string" as const, description: "Nombre del usuario final" },
-        date: { type: "string" as const, description: "Fecha de la consulta (p.ej. hoy o YYYY-MM-DD)" },
-        category: {
-          type: "string" as const,
-          description: "Categoría de entrada consultada",
-          enum: ["general", "premium", "vip"],
-        },
-      },
-      required: ["category", "date"],
-    },
+      : { Authorization: `Bearer ${cfg.toolSecret}` },
+    requestBodySchema: cfg.tool.requestBodySchema,
     responseTimeoutSecs: 30,
     interruptionMode: "disable_during_tool_and_turn",
   };
 }
 
-/** JSON-schema del body (compartido entre SDK camelCase y REST snake_case). */
-function toolBodyJsonSchema() {
+/** Patch REST (snake_case) de la api_schema del webhook tool. */
+function toolApiSchemaRawPatch(cfg: ResolvedConfig, secretId: string) {
   return {
-    type: "object",
-    properties: {
-      tenant_id: { type: "string", description: "Identificador del cliente/tenant FactorIA" },
-      user_name: { type: "string", description: "Nombre del usuario final" },
-      date: { type: "string", description: "Fecha de la consulta (p.ej. hoy o YYYY-MM-DD)" },
-      category: { type: "string", description: "Categoría de entrada consultada", enum: ["general", "premium", "vip"] },
+    tool_config: {
+      type: "webhook",
+      name: cfg.tool.name,
+      description: cfg.tool.description,
+      api_schema: {
+        url: cfg.tool.url,
+        method: "POST",
+        content_type: "application/json",
+        request_headers: { Authorization: { secret_id: secretId } },
+        request_body_schema: cfg.tool.requestBodySchema,
+        response_timeout_secs: 30,
+        interruption_mode: "disable_during_tool_and_turn",
+      },
     },
-    required: ["category", "date"],
   };
 }
 
@@ -195,35 +363,6 @@ async function ensurePostCallWebhook(client: ElevenLabsClient, url: string) {
   ]);
 }
 
-/** Devuelve la URL actual del webhook tool (para --update-tool sin --tool-url). */
-async function currentToolUrl(client: ElevenLabsClient, toolId: string): Promise<string> {
-  const data = await client.conversationalAi.tools.get(toolId);
-  const url = (data.toolConfig as { apiSchema?: { url?: string } }).apiSchema?.url;
-  if (!url) throw new Error(`No se pudo leer la URL de la tool ${toolId}`);
-  return url;
-}
-
-/** Patch REST (snake_case) de la api_schema del webhook tool. */
-function toolApiSchemaRawPatch(toolEndpoint: string, secretId: string) {
-  return {
-    tool_config: {
-      type: "webhook",
-      name: TOOL_NAME,
-      description:
-        "Consulta disponibilidad y precio de entradas del tenant. Úsala cuando el usuario pregunte por disponibilidad, precios u horarios.",
-      api_schema: {
-        url: `${toolEndpoint}/api/tools/check-availability`,
-        method: "POST",
-        content_type: "application/json",
-        request_headers: { Authorization: { secret_id: secretId } },
-        request_body_schema: toolBodyJsonSchema(),
-        response_timeout_secs: 30,
-        interruption_mode: "disable_during_tool_and_turn",
-      },
-    },
-  };
-}
-
 function log(title: string, lines: string[]) {
   const width = Math.max(title.length, ...lines.map((l) => l.length)) + 4;
   console.log(`\n${"─".repeat(width)}\n  ${title}\n${"─".repeat(width)}`);
@@ -232,35 +371,50 @@ function log(title: string, lines: string[]) {
 }
 
 async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
   if (args.help) {
     console.log(`
-Provisiona la POC en ElevenLabs (agente + webhook tool).
+Provisiona ElevenLabs por cliente (agente + webhook tool + post-call opcional).
+La config por cliente vive en scripts/clients/<id>.json (ver _template.json).
 
---dry-run            Muestra qué haría sin llamar a la API.
---agent-name NAME    Nombre del agente (default: "Factoria POC Agent").
---tool-url URL       Base URL del endpoint FactorIA (default: NEXT_PUBLIC_FACTORIA_BASE_URL).
---secret SECRET      Override de FACTORIA_TOOL_SECRET.
---secret-name NAME   Nombre del secret en el workspace de ElevenLabs (default: FACTORIA_TOOL_SECRET).
---update-agent       Si el agente ya existe, forzar update (re-aplica prompt + tools).
---update-tool        Si la tool ya existe, forzar update de su api_schema (auth con secret selector).
---enable-webhook     Crea (o reutiliza) el webhook de post-call y lo ata en los settings de ConvAI.
---webhook-url URL    URL base del post-call webhook (default: <--tool-url>/api/webhooks/elevenlabs).
---help               Esta ayuda.
+--client ID         Aprovisiona con la config de scripts/clients/<id>.json.
+--list-clients      Lista los clientes configurados.
+--dry-run           Muestra qué haría sin llamar a la API.
+--agent-name NAME   Override del nombre del agente.
+--tool-url URL      Override de la base URL del endpoint FactorIA.
+--secret SECRET     Override del valor del secret (FACTORIA_TOOL_SECRET).
+--secret-name NAME  Override del nombre del secret en el workspace.
+--update-agent      Si el agente ya existe, forzar update (re-aplica prompt + tools).
+--update-tool       Si la tool ya existe, forzar update de su api_schema (auth secret selector).
+--enable-webhook    Crea (o reutiliza) el post-call webhook y lo ata en settings ConvAI.
+--webhook-url URL   Override de la URL del post-call webhook.
+--help              Esta ayuda.
 `);
     return;
   }
 
-  const toolVisibleUrl = `${toolUrl}/api/tools/check-availability`;
-  const secretLabel = toolSecret === "factoria-secret-token-2026" ? " (default de desarrollo)" : "";
+  if (args.listClients) {
+    const ids = listClientIds();
+    console.log(`Clientes configurados (${ids.length}):`);
+    for (const id of ids) console.log(`  - ${id}`);
+    return;
+  }
+
+  const file = str(args.client) ? loadClientConfig(str(args.client)) : undefined;
+  const cfg = resolveConfig(args, file);
+
+  const secretLabel = cfg.toolSecret === "factoria-secret-token-2026" ? " (default de desarrollo)" : "";
   console.log(`\nfactorIA POC · ElevenLabs provisioning\n`);
-  console.log(`  agent  : ${agentName}`);
-  console.log(`  tool   : ${TOOL_NAME} → ${toolVisibleUrl}`);
-  console.log(`  auth   : Authorization vía secret selector (secret_id:${secretName})${secretLabel}`);
-  console.log(`  webhook: ${enableWebhook ? webhookUrl : "deshabilitado (usa --enable-webhook)"}`);
-  console.log(`  dry-run: ${dryRun ? "SÍ (no se ejecuta nada)" : "no"}\n`);
+  console.log(`  cliente: ${cfg.clientId}`);
+  console.log(`  agent  : ${cfg.agentName}`);
+  console.log(`  tool   : ${cfg.tool.name} → ${cfg.tool.url}`);
+  console.log(`  auth   : Authorization vía secret selector (secret_id:${cfg.secretName})${secretLabel}`);
+  console.log(`  webhook: ${cfg.enableWebhook ? cfg.webhookUrl : "deshabilitado (usa --enable-webhook o enableWebhook en config)"}`);
+  console.log(`  dry-run: ${args.dryRun ? "SÍ (no se ejecuta nada)" : "no"}\n`);
 
   if (!apiKey) {
-    if (dryRun) {
+    if (args.dryRun) {
       log("ATENCIÓN", ["ELEVENLABS_API_KEY no definida. En dry-run seguimos con valores ficticios."]);
     } else {
       log("ERROR", [
@@ -278,88 +432,86 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
   // para que el Bearer nunca quede literal en la config de la tool.
   // El valor del secret es el header COMPLETO (`Bearer <token>`), que ElevenLabs
   // resolverá al enviar la llamada al webhook tool.
-  const toolSecretId = client ? await ensureToolSecret(client, secretName, `Bearer ${toolSecret}`) : undefined;
+  const toolSecretId = client ? await ensureToolSecret(client, cfg.secretName, `Bearer ${cfg.toolSecret}`) : undefined;
 
-  if (dryRun || !client) {
+  if (args.dryRun || !client) {
     log("DRY-RUN: tool", [
-      `POST ${toolVisibleUrl}`,
-      `headers: { Authorization: { secret_id: "${secretName}" } } (selector de secreto)`,
-      `body: { tenant_id?, user_name?, date, category }`,
+      `POST ${cfg.tool.url}`,
+      `headers: { Authorization: { secret_id: "${cfg.secretName}" } } (selector de secreto)`,
+      `body: { ${Object.keys(cfg.tool.requestBodySchema.properties).join(", ")} }`,
     ]);
-    const draft = buildRestConfig(TOOL_ID);
+    const draft = buildRestConfig(cfg, cfg.tool.name);
     console.log("JSON de conversation_config (snake_case, vía REST) que se enviaría:\n", JSON.stringify(draft, null, 2));
     return;
   }
 
   // ---- 0. Post-call webhook (opcional) ----
-  if (enableWebhook && client) {
-    await ensurePostCallWebhook(client, webhookUrl);
+  if (cfg.enableWebhook && client) {
+    await ensurePostCallWebhook(client, cfg.webhookUrl);
   }
 
   // ---- 1. Tool ----
   let toolId: string;
-  const existingTool = (await findAllTools(client)).find((t) => t.name === TOOL_NAME);
-  if (existingTool && updateTool) {
+  const existingTool = (await findAllTools(client)).find((t) => t.name === cfg.tool.name);
+  if (existingTool && args.updateTool) {
     toolId = existingTool.id;
-    const endpoint = toolUrlExplicit ? toolUrl : await currentToolUrl(client, toolId);
     if (!toolSecretId) {
       log("ERROR", ["No se pudo obtener el secret del workspace para el header de la tool."]);
       process.exit(1);
     }
-    await elevenlabsRest("PATCH", `/v1/convai/tools/${toolId}`, toolApiSchemaRawPatch(endpoint, toolSecretId));
+    await elevenlabsRest("PATCH", `/v1/convai/tools/${toolId}`, toolApiSchemaRawPatch(cfg, toolSecretId));
     log("TOOL", [
-      `Actualizada "${TOOL_NAME}" → id ${toolId}`,
-      `URL: ${endpoint}/api/tools/check-availability`,
-      `Auth: Authorization: { secret_id: ${secretName} } (sin literal)`,
+      `Actualizada "${cfg.tool.name}" → id ${toolId}`,
+      `URL: ${cfg.tool.url}`,
+      `Auth: Authorization: { secret_id: ${cfg.secretName} } (sin literal)`,
     ]);
   } else if (existingTool) {
     toolId = existingTool.id;
     log("TOOL", [
-      "Ya existe: " + TOOL_NAME + " → id " + toolId,
+      "Ya existe: " + cfg.tool.name + " → id " + toolId,
       "Se reutiliza (no se modifica). Usa --update-tool para migrar su auth al secret selector.",
     ]);
   } else {
     const created = await client.conversationalAi.tools.create({
       toolConfig: {
         type: "webhook",
-        name: TOOL_NAME,
-        description:
-          "Consulta disponibilidad y precio de entradas del tenant. Úsala cuando el usuario pregunte por disponibilidad, precios u horarios.",
-        apiSchema: toolApiSchema(toolUrl, toolSecretId),
+        name: cfg.tool.name,
+        description: cfg.tool.description,
+        apiSchema: toolApiSchema(cfg, toolSecretId),
       },
     });
     toolId = created.id;
     log("TOOL", [
-      "Creada " + TOOL_NAME + " → id " + toolId,
-      `URL: ${toolVisibleUrl}`,
-      `Auth: Authorization: { secret_id: ${secretName} } (sin literal)`,
+      "Creada " + cfg.tool.name + " → id " + toolId,
+      `URL: ${cfg.tool.url}`,
+      `Auth: Authorization: { secret_id: ${cfg.secretName} } (sin literal)`,
     ]);
   }
 
   // ---- 2. Agent ----
 
-  const existingAgent = (await findAllAgents(client)).find((a) => a.name === agentName);
+  const existingAgent = (await findAllAgents(client)).find((a) => a.name === cfg.agentName);
 
-  if (existingAgent && !updateAgent) {
+  if (existingAgent && !args.updateAgent) {
     log("AGENTE", [
-      `Ya existe "${agentName}" → id ${existingAgent.id}`,
+      `Ya existe "${cfg.agentName}" → id ${existingAgent.id}`,
       "Reutilizado. Usa --update-agent para re-aplicar prompt/tools.",
       "Copia el ID en .env.local como NEXT_PUBLIC_ELEVENLABS_AGENT_ID.",
     ]);
-    finish(existingAgent.id, toolId);
+    finish(cfg, existingAgent.id, toolId);
     return;
   }
 
-  if (existingAgent && updateAgent) {
-    await updateAgentViaRest(existingAgent.id, buildRestConfig(toolId));
-    log("AGENTE", [`Actualizado "${agentName}" → id ${existingAgent.id} (prompt + tool_ids re-aplicados).`]);
-    finish(existingAgent.id, toolId);
+  if (existingAgent && args.updateAgent) {
+    await updateAgentViaRest(existingAgent.id, buildRestConfig(cfg, toolId));
+    log("AGENTE", [`Actualizado "${cfg.agentName}" → id ${existingAgent.id} (prompt + tool_ids re-aplicados).`]);
+    finish(cfg, existingAgent.id, toolId);
     return;
   }
 
-  const createdAgent = await createAgentViaRest(agentName, buildRestConfig(toolId));
-  log("AGENTE", ["Creado " + agentName + " → id " + createdAgent.agentId]);
-  finish(createdAgent.agentId, toolId);
+  const createdAgent = await createAgentViaRest(cfg.agentName, buildRestConfig(cfg, toolId));
+  log("AGENTE", ["Creado " + cfg.agentName + " → id " + createdAgent.agentId]);
+  finish(cfg, createdAgent.agentId, toolId);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +522,7 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
 // ---------------------------------------------------------------------------
 const REST_BASE = "https://api.elevenlabs.io";
 
-function buildRestConfig(toolId: string) {
+function buildRestConfig(cfg: ResolvedConfig, toolId: string) {
   return {
     text_only: false,
     conversation: {
@@ -388,22 +540,20 @@ function buildRestConfig(toolId: string) {
     turn: {
       turn_timeout: 30,
     },
-agent: {
-      first_message:
-        "¡Hola! Soy el agente de FactorIA. ¿En qué puedo ayudarte? Puedo consultarte disponibilidad y precios.",
-      language: "es",
+    agent: {
+      first_message: cfg.firstMessage,
+      language: cfg.language,
       prompt: {
-        prompt: SYSTEM_PROMPT,
-        // LLM multilingüe explícito (disponible en free tier).
+        prompt: cfg.systemPrompt,
         llm: "gemini-2.5-flash",
-        timezone: "America/Bogota",
+        timezone: cfg.timezone,
         tool_ids: [toolId],
       },
     },
     // OBLIGATORIO para agentes no-ingleses: el TTS por defecto (eleven_flash_v2) es
-    // solo inglés; con language="es" el servidor exige un modelo v2.5 (turbo o flash).
+    // solo inglés; con language distinto el servidor exige un modelo v2.5.
     tts: {
-      model_id: "eleven_flash_v2_5",
+      model_id: cfg.ttsModel,
     },
   };
 }
@@ -445,7 +595,11 @@ async function updateAgentViaRest(agentId: string, conversationConfig: unknown) 
   });
 }
 
-function finish(agentId: string, toolId: string) {
+function finish(cfg: ResolvedConfig, agentId: string, toolId: string) {
+  const sample: Record<string, unknown> = {};
+  for (const [key, prop] of Object.entries(cfg.tool.requestBodySchema.properties)) {
+    sample[key] = prop.enum?.[0] ?? "…";
+  }
   console.log("─────────────────────────────────────────────────────────────");
   console.log("\n  Siguientes pasos:\n");
   console.log(`  1. En .env.local pon:`);
@@ -453,12 +607,12 @@ function finish(agentId: string, toolId: string) {
   console.log(`       ELEVENLABS_API_KEY=<tu api key>`);
   console.log(`  2. npm run dev`);
   console.log(`  3. Abre http://localhost:3000 y usa el widget (voz) o la tarjeta de prueba.`);
-  console.log(`\n  Tool webhook creada/vinculada: ${TOOL_NAME} (${toolId})`);
+  console.log(`\n  Tool webhook creada/vinculada: ${cfg.tool.name} (${toolId})`);
   console.log(
-    `  -> En la consola de ElevenLabs (Agents → Tools) puedes verla; también aparece dentro del agente "${agentName}".`
+    `  -> En la consola de ElevenLabs (Agents → Tools) puedes verla; también aparece dentro del agente "${cfg.agentName}".`
   );
   console.log(
-    `  -> Para probar el webhook directamente:\n     curl -X POST ${toolUrl}/api/tools/check-availability -H "Authorization: Bearer $FACTORIA_TOOL_SECRET" -H "Content-Type: application/json" -d '{"tenant_id":"bibo-park-one","user_name":"Valentina","date":"2026-10-05","category":"vip"}'`
+    `  -> Para probar el webhook directamente:\n     curl -X POST ${cfg.tool.url} -H "Authorization: Bearer $FACTORIA_TOOL_SECRET" -H "Content-Type: application/json" -d '${JSON.stringify(sample)}'`
   );
   console.log("");
 }
