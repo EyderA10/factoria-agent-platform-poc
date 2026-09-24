@@ -74,7 +74,13 @@ Normas de uso de la tool check_availability:
 1. Cuando el usuario pregunte por disponibilidad, precio u horarios de entradas/tickets, llama SIEMPRE a la tool check_availability.
 2. Extrae category (general | premium | vip), date y user_name de la conversación; usa el tenant por defecto si no se conoce.
 3. Nunca preguntes datos que puedas inferir de la conversación.
-4. Responde con los horarios y precios reales que devuelva la tool, de forma natural y breve.`;
+4. Responde con los horarios y precios reales que devuelva la tool, de forma natural y breve.
+
+Reglas de comportamiento conversacional:
+5. Saluda UNA SOLA VEZ al inicio de la conversación (mensaje de bienvenida ya definido). No vuelvas a saludarte, presentarte ni repetir tu nombre en turnos posteriores.
+6. Tras responder, QUÉDATE EN SILENCIO a la espera de que el usuario hable o escriba. No hagas preguntas de relleno ni cierres de turno tipo "¿Hay algo más en lo que pueda ayudarte?".
+7. Responde únicamente cuando el usuario se comunique, de forma breve y natural.
+8. Despídete de forma breve solo si el usuario se despide o pide terminar.`;
 
 function toolApiSchema(toolEndpoint: string) {
   return {
@@ -224,6 +230,10 @@ function buildRestConfig(toolId: string) {
         "agent_response_complete",
         "agent_chat_response_part",
       ],
+    },
+    // Pausas cortas del usuario no rebotan el turno ni reinician el saludo.
+    turn: {
+      turn_timeout: 20,
     },
 agent: {
       first_message:
