@@ -85,11 +85,12 @@ Copia `.env.example` → `.env.local` y completa:
 | `npm run dev` | servidor de desarrollo |
 | `npm run build` | build de producción |
 | `npm run typecheck` | tipos (`tsc --noEmit`) |
-| `npm run setup` | provisiona tool (secret selector) + agente en ElevenLabs (`--update-tool`, `--update-agent`) |
+| `npm run setup` | provisiona tool (secret selector) + agente en ElevenLabs (`--update-tool`, `--update-agent`, `--enable-webhook`) |
 
 ## Validado y conocido
 
 - **Estado de validación**: ver `docs/validacion-poc-estado.md` (qué se probó, cómo reproducirlo y qué depende del cliente).
-- **Pendiente de credenciales**: WhatsApp (Meta WABA), telefonía (Twilio/SIP), post-call webhooks end-to-end (activar en el dashboard de ElevenLabs).
+- **Validado E2E**: agente + webhook tool (auth por selector de secretos) y **post-call webhook** con evento real `post_call_transcription` verificado por HMAC.
+- **Pendiente de credenciales del cliente**: WhatsApp (Meta WABA), telefonía (Twilio/SIP).
 - La **demo del widget** simula al agente localmente; el modo real usa WebRTC vía `@elevenlabs/react` con la signed URL.
 - Ver `docs/elevenlabs-capabilities.md` para qué se administra vía API y qué requiere dashboard/terceros.

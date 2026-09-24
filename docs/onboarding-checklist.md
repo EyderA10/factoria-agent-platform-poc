@@ -1,7 +1,7 @@
 # Checklist de Onboarding — FactorIA Agent Platform
 
 > Entregable para el cliente. Rellénalo y devuélvelo a FactorIA; luego lo aplicamos al agente.
-> Contacto: +57 300 000 0000 · soporte@factoria.app
+> Contacto: [email / teléfono de FactorIA]
 
 ---
 

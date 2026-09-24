@@ -12,9 +12,10 @@ export const dynamic = "force-dynamic";
  * El secret se configura en ELEVENLABS_WEBHOOK_SECRET (variable de entorno).
  *
  * Eventos manejados (logging estructurado, no bloquea la conversación):
- *   - agent_tool_response* -> qué tool llamó el agente y con qué payload
- *   - conversation_ended   -> fin de conversación (+ metadata.cost si viene)
- *   - resto                -> se loguea y se descarta
+ *   - post_call_transcription -> transcripción + análisis + coste al terminar el análisis
+ *   - agent_tool_response*    -> qué tool llamó el agente y con qué payload
+ *   - conversation_ended      -> fin de conversación (+ metadata.cost si viene)
+ *   - resto                   -> se loguea y se descarta
  */
 
 const SIGNATURE_HEADER = "elevenlabs-signature";
@@ -81,6 +82,18 @@ export async function POST(req: NextRequest) {
   const metadata = (event.metadata ?? {}) as Record<string, unknown>;
 
   switch (type) {
+    case "post_call_transcription": {
+      const data = (event.data ?? {}) as Record<string, unknown>;
+      const dataMeta = (data.metadata ?? {}) as Record<string, unknown>;
+      const transcript = Array.isArray(data.transcript) ? (data.transcript as { role?: string; message?: string }[]) : [];
+      const cost = dataMeta.cost ?? (data as { cost?: unknown }).cost ?? metadata.cost ?? null;
+      const firstUser = transcript.find((m) => m.role === "user")?.message ?? "";
+      const agentMsgs = transcript.filter((m) => m.role === "agent").length;
+      console.log(
+        `[ElevenLabs-inbound] post_call_transcription conv=${(data.conversation_id as string) ?? conversationId ?? "-"} status=${(data.status as string) ?? "-"} lines=${transcript.length} (agente=${agentMsgs}) cost=${JSON.stringify(cost ?? null)} user="${firstUser.slice(0, 120)}"`
+      );
+      break;
+    }
     case "agent_tool_response":
     case "agent_tool_response_full_payload":
       console.log(

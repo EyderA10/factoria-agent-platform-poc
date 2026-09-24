@@ -25,9 +25,9 @@
 | ID | Requisito |
 |---|---|
 | RNF1 | Latencia de primera respuesta < 1,5 s (STT/TTS en ElevenLabs) |
-| RNF2 | Confirmación de que el agente **no inventa datos** (siempre llama a la tool; nunca responde horarios de memoria) → `requestBodySchema` obliga a la tool |
+| RNF2 | Confirmación de que el agente **no inventa datos**: el prompt obliga a llamar a la tool y el schema valida el payload → nunca responde horarios/precios de memoria |
 | RNF3 | Multi-tenant: `tenant_id` para separar clientes (aquí `bibo`) |
-| RNF4 | Secretos nunca en el navegador ni en tuplas de código |
+| RNF4 | Secretos nunca en el navegador ni en el código |
 | RNF5 | Trazabilidad: cada tool call y su resultado quedan en logs/registro |
 | RNF6 | Coste por conversación medible (`metadata.cost`) |
 
@@ -53,6 +53,8 @@
 
 ## 5. Límites del POC
 
-- No se crean agentes reales en ElevenLabs hasta tener `ELEVENLABS_API_KEY` (usuaria free tier).
+- Agente real desplegado en ElevenLabs (`agent_8301m385jmsaf4ybzvmvaegk8bsc`) con tool webhook E2E
+  validada (agente → FactorIA Tool Layer → datos reales); post-call webhook activo y HMAC verificado.
 - WhatsApp y telefonía requieren credenciales externas (Meta WABA / Twilio) que el cliente debe aportar.
-- La demo del widget muestra el flujo conversacional completo sin llamadas reales.
+- La demo del widget tiene dos modos: **simulado** (sin credenciales, para evaluar UX) y **real**
+  (WebRTC con el agente de ElevenLabs vía signed URL).

@@ -45,6 +45,7 @@ function parseArgs(argv: string[]) {
     dryRun: false,
     updateAgent: false,
     updateTool: false,
+    enableWebhook: false,
     toolUrlExplicit: false,
   };
   const positional: string[] = [];
@@ -52,6 +53,8 @@ function parseArgs(argv: string[]) {
     if (arg === "--dry-run") opts.dryRun = true;
     else if (arg === "--update-agent") opts.updateAgent = true;
     else if (arg === "--update-tool") opts.updateTool = true;
+    else if (arg === "--enable-webhook") opts.enableWebhook = true;
+    else if (arg.startsWith("--webhook-url=")) opts.webhookUrl = arg.split("=")[1];
     else if (arg === "--help") opts.help = true;
     else if (arg === "--agent-name") opts.agentName = "";
     else if (opts.agentName === "") opts.agentName = arg;
@@ -70,9 +73,11 @@ const args = parseArgs(process.argv.slice(2));
 const dryRun = Boolean(args.dryRun);
 const updateAgent = Boolean(args.updateAgent);
 const updateTool = Boolean(args.updateTool);
+const enableWebhook = Boolean(args.enableWebhook);
 const agentName = String(args.agentName ?? "Factoria POC Agent");
 const toolUrl = String(args.toolUrl ?? env.NEXT_PUBLIC_FACTORIA_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const toolUrlExplicit = Boolean(args.toolUrlExplicit);
+const webhookUrl = String(args.webhookUrl ?? `${toolUrl}/api/webhooks/elevenlabs`).replace(/\/$/, "");
 const toolSecret = String(args.secret ?? env.FACTORIA_TOOL_SECRET ?? "factoria-secret-token-2026");
 const secretName = String(args.secretName ?? "FACTORIA_TOOL_SECRET");
 const apiKey = env.ELEVENLABS_API_KEY ?? "";
@@ -149,6 +154,47 @@ async function ensureToolSecret(client: ElevenLabsClient, name: string, value: s
   return created.secretId;
 }
 
+/**
+ * Workspace webhook de post-call (HMAC): lo crea si no existe y lo ata como
+ * receptor `post_call` en los settings de ConvAI (evento "transcript").
+ * El signing secret que devuelve la plataforma (solo en la creación) debe
+ * guardarse como ELEVENLABS_WEBHOOK_SECRET para que el endpoint lo verifique.
+ */
+async function ensurePostCallWebhook(client: ElevenLabsClient, url: string) {
+  const listed = await client.webhooks.list({ includeUsages: false });
+  let webhookId = listed.webhooks.find((w) => w.webhookUrl === url)?.webhookId;
+
+  if (!webhookId) {
+    const created = await client.webhooks.create({
+      settings: {
+        authType: "hmac",
+        name: "FactorIA post-call",
+        webhookUrl: url,
+      },
+    });
+    webhookId = created.webhookId;
+    if (created.webhookSecret) {
+      log("WEBHOOK", [`Nuevo signing secret (pégalo en ELEVENLABS_WEBHOOK_SECRET): ${created.webhookSecret}`]);
+    }
+  }
+
+  const current = await client.conversationalAi.settings.get();
+  const bound = current.webhooks?.postCallWebhookId === webhookId;
+  await client.conversationalAi.settings.update({
+    webhooks: {
+      postCallWebhookId: webhookId,
+      events: ["transcript"],
+      transcriptFormat: "json",
+    },
+  });
+
+  log("WEBHOOK", [
+    `Post-call webhook → ${webhookId} (${url})`,
+    `Atado en settings ConvAI (evento transcript, formato json)${bound ? " — ya estaba atado" : ""}`,
+    "HMAC verificado en app/api/webhooks/elevenlabs con ELEVENLABS_WEBHOOK_SECRET.",
+  ]);
+}
+
 /** Devuelve la URL actual del webhook tool (para --update-tool sin --tool-url). */
 async function currentToolUrl(client: ElevenLabsClient, toolId: string): Promise<string> {
   const data = await client.conversationalAi.tools.get(toolId);
@@ -197,6 +243,8 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
 --secret-name NAME   Nombre del secret en el workspace de ElevenLabs (default: FACTORIA_TOOL_SECRET).
 --update-agent       Si el agente ya existe, forzar update (re-aplica prompt + tools).
 --update-tool        Si la tool ya existe, forzar update de su api_schema (auth con secret selector).
+--enable-webhook     Crea (o reutiliza) el webhook de post-call y lo ata en los settings de ConvAI.
+--webhook-url URL    URL base del post-call webhook (default: <--tool-url>/api/webhooks/elevenlabs).
 --help               Esta ayuda.
 `);
     return;
@@ -208,6 +256,7 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
   console.log(`  agent  : ${agentName}`);
   console.log(`  tool   : ${TOOL_NAME} → ${toolVisibleUrl}`);
   console.log(`  auth   : Authorization vía secret selector (secret_id:${secretName})${secretLabel}`);
+  console.log(`  webhook: ${enableWebhook ? webhookUrl : "deshabilitado (usa --enable-webhook)"}`);
   console.log(`  dry-run: ${dryRun ? "SÍ (no se ejecuta nada)" : "no"}\n`);
 
   if (!apiKey) {
@@ -240,6 +289,11 @@ Provisiona la POC en ElevenLabs (agente + webhook tool).
     const draft = buildRestConfig(TOOL_ID);
     console.log("JSON de conversation_config (snake_case, vía REST) que se enviaría:\n", JSON.stringify(draft, null, 2));
     return;
+  }
+
+  // ---- 0. Post-call webhook (opcional) ----
+  if (enableWebhook && client) {
+    await ensurePostCallWebhook(client, webhookUrl);
   }
 
   // ---- 1. Tool ----

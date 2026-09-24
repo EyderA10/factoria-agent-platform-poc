@@ -10,7 +10,7 @@
   En ElevenLabs el webhook tool **no** guarda el literal: referencia el secret del workspace por
   **`secret_id`** y ElevenLabs inyecta el valor en el header al llamar.
 - **Body**: JSON validado con **Zod** (schema es el contrato; probar contra `lib/tools/check-availability.ts`).
-- **Respuesta**: `200 { success: true, data: ... }` o `400/401/422` con `{ success: false, error }`.
+- **Respuesta**: `200 { success: true, data: ... }`; errores `400` (body inválido), `401` (sin Authorization) o `500` (interno) con `{ success: false, error }`.
 
 Este POC implementa el auth del webhook tool con selector de secretos (`scripts/setup-agent.ts` →
 `ensureToolSecret` + `toolApiSchema(endpoint, secretId)`), de modo que el Bearer nunca aparece en la config:
@@ -53,8 +53,8 @@ lib/tools/check-availability.ts            → schema zod + handler (lógica pur
 lib/tools/registry.ts                      → tools como `tool()` de Vercel AI SDK (registry)
 lib/tools/index.ts                         → re-exporta el registry
 app/api/poc/test-tool/route.ts             → mismo handler SIN exponer secret (demo UI)
-scripts/setup-agent.ts                     → ELEVA el contrato a ElevenLabs (tool + agente + secret)
-app/api/webhooks/elevenlabs/route.ts       → post-call entrante con verificación HMAC
+scripts/setup-agent.ts                     → ELEVA el contrato a ElevenLabs (tool + agente + secret + webhook post-call)
+app/api/webhooks/elevenlabs/route.ts       → post-call entrante con verificación HMAC (webhook workspace)
 ```
 
 ## 3. Reutilización con Vercel AI SDK
@@ -68,7 +68,7 @@ import { checkAvailability } from "@/lib/tools/check-availability";
 
 const checkAvailabilityTool = tool({
   description: "Consulta disponibilidad de entradas del cliente.",
-  inputSchema: checkAvailabilitySchema, // el MISMO schema (ai v7 usa inputSchema)
+  inputSchema: checkAvailabilityInputSchema, // el MISMO schema (ai v7 usa inputSchema)
   execute: async (args) => checkAvailability(args),
 });
 ```
@@ -88,6 +88,6 @@ propio fichero y se comparte con el endpoint HTTP. Para añadir una tool: crear 
 ## 5. Seguridad de tool layer
 
 1. `FACTORIA_TOOL_SECRET` **solo** en variables de entorno del backend; en ElevenLabs solo el select de secretos (`secret_id`).
-2. En desarrollo `?skipAuth=1` **solo** cuando `NODE_ENV === "development"` (nunca en producción).
+2. En desarrollo/preview local `?skipAuth=1` **solo** cuando `NODE_ENV !== "production"` (nunca en producción).
 3. Zod en el borde (`route.ts`) rechaza payloads inválidos antes del handler.
 4. Post-call webhooks entrantes: verificar HMAC `ElevenLabs-Signature`. Permitir solo egress ElevenLabs.

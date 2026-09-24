@@ -1,6 +1,6 @@
 # POC FactorIA Agent Platform — Estado de validación
 
-> Versión: 2026-09-24 · Fase 1 aplicada
+> Versión: 2026-09-24 · Fase 1 aplicada y post-call webhook E2E validado
 > Alcance de este doc: validar con la empresa qué se probó, cómo hacerlo y qué sigue dependiendo del cliente.
 
 ## 1. Entregables propuestos (correo) y su estado
@@ -11,7 +11,7 @@
 | 2 | Agente de ElevenLabs con la tool de disponibilidad | ✅ Configurado | `GET /v1/convai/agents/…`: `turn_timeout=30`, prompt con reglas 5–8, `tool_ids` correctos |
 | 3 | **FactorIA Tool Layer** (endpoint `POST /api/tools/check-availability`) | ✅ Validado E2E | El agente llamó al webhook y respondió con **datos reales** (`vip 35 USD · 12:00 PM · 07:00 PM`); log Vercel del POST |
 | 4 | **Registry** con Vercel AI SDK (misma lógica para agentes internos) | ✅ Implementado | `lib/tools/registry.ts` (ai v7, `inputSchema`); `npm run typecheck` limpio |
-| 5 | **Post-call webhook** entrante con verificación HMAC | ✅ Backend listo | `app/api/webhooks/elevenlabs`; falta solo activar el envío en el workspace de ElevenLabs |
+| 5 | **Post-call webhook** entrante con verificación HMAC | ✅ Validado E2E | Webhook workspace activo (`--enable-webhook`, evento `transcript`); evento real `post_call_transcription` recibido y verificado (HMAC, `cost` en microcréditos) |
 | 6 | **Secretos**: webhook tool con auth por selector de secretos, sin literales | ✅ Aplicado | `GET /v1/convai/tools/…`: header `Authorization: { secret_id }` (sin token); `ELEVENLABS_WEBHOOK_SECRET` en Vercel (prod/preview/dev) |
 | 7 | **Documentación** de arquitectura, capabilities y tool layer | ✅ Actualizada | `docs/architecture-update.md`, `docs/elevenlabs-capabilities.md`, `docs/factoria-tool-layer.md`, `docs/onboarding-checklist.md`, `docs/bibo-park-requirements.md` |
 
@@ -33,9 +33,11 @@
 ## 3. Evidencia técnica de la Fase 1
 
 - Log de Vercel: `200 POST /api/tools/check-availability` con payload del agente (`tenant_id`, `user_name`, `date`, `category`).
+- Log de Vercel: `POST /api/webhooks/elevenlabs` con evento real `post_call_transcription`
+  (`status=done`, líneas de transcripción, `cost=468` microcréditos) validado por HMAC.
 - Tool webhook: `url` apunta a producción; `request_headers.Authorization = { secret_id }` (sin token expuesto).
 - Secret `FACTORIA_TOOL_SECRET` creado en el workspace de ElevenLabs (valor = `Bearer <token>`, el header completo).
-- `ELEVENLABS_WEBHOOK_SECRET` añadido a Vercel como Secret (production/preview/development).
+- `ELEVENLABS_WEBHOOK_SECRET` (signing secret del webhook, `wsec_…`) añadido a Vercel como Secret (production/preview/development).
 - Comportamiento conversacional ajustado: el agente **no** repite «¿sigues ahí?», responde **una sola vez** y solo pregunta «¿algo más?» **una vez** por turno; tiempo de silencio 30 s con «take turn after silence» anulado desde el widget (`user_activity` cada 10 s).
 
 ## 4. Fuera del alcance probado (requiere datos/credenciales del cliente)
@@ -46,7 +48,7 @@
 | Telefonía real (inbound/outbound/transferencia a humano) | Número Twilio/SIP de la empresa + billing |
 | Transferencia a humano | Número destino real de Factoria |
 | Bases de conocimiento de Bibo | Docs/capacitación en el formato KB de ElevenLabs |
-| Post-call webhooks end-to-end (transcript/coste real por llamada) | Activar envío a nivel de workspace en el dashboard de ElevenLabs |
+| Webhook post-call: eventos de audio / fallo de iniciación | Marcar `audio`/`call_initiation_failure` en el webhook workspace (opcional) |
 
 ## 5. Recomendación de validación por la empresa
 

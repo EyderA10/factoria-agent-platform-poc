@@ -17,8 +17,8 @@
 | Signed URLs para el widget | ✅ `getSignedUrl` | — | ✅ `app/api/elevenlabs/session` |
 | WebRTC desde el navegador | ✅ SDK React | — | ✅ widget propio |
 | Usuario/sesión desde el navegador (`userId`, variables dinámicas) | ✅ `startSession` params | — | ✅ |
-| Post-call webhooks (transcripción, audio, coste) | ✅ solicitud vía settings | ⏳ en curso | ✅ `app/api/webhooks/elevenlabs` (HMAC) |
-| Logs/coste de llamadas (`metadata.cost`) | ✅ `conversation.get` | ✅ | ✅ en post-call |
+| Post-call webhooks (transcripción, audio, coste) | ✅ solicitud vía settings (`webhooks` API) | ✅ | ✅ webhook workspace activo (`--enable-webhook`) + HMAC |
+| Logs/coste de llamadas (`metadata.cost`) | ✅ `conversation.get` | ✅ | ✅ evento `post_call_transcription` con `cost` registrado |
 | Outbound call (voz) | ✅ `call.outerTaskOutboundCall` | ✅ | ✅ endpoint backend |
 | Telefonía: números Twilio/SIP (Vonage, Telnyx, Plivo, Bandwidth, Exotel) | ✅ import vía dashboard | ✅ | ⏳ según proveedor |
 | Asignar agente a un número entrante | ✅ vía dashboard (agent → phone) | ✅ | ⏳ depende de credenciales |
