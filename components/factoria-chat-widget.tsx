@@ -178,7 +178,7 @@ function RealControls({
   pushMessage: (role: MessageRole, text: string, tentative?: boolean) => void;
   onSetupNeeded: () => void;
 }) {
-  const { startSession, endSession, sendUserMessage } = useConversationControls();
+  const { startSession, endSession, sendUserMessage, sendUserActivity } = useConversationControls();
   const { status } = useConversationStatus();
   const { isSpeaking } = useConversationMode();
   const { isMuted, setMuted } = useConversationInput();
@@ -254,6 +254,16 @@ function RealControls({
   }, [connected, pushMessage, sendUserMessage, text]);
 
   const busy = starting || status === "connecting";
+
+  // Mientras el usuario esté inactivo, resetea periódicamente el timeout de
+  // turno de ElevenLabs (evento user_activity). Sin esto, el agente retoma el
+  // turno tras el silencio y pregunta "¿sigues ahí?" / "¿algo más?". Con este
+  // loop, el agente solo responde cuando el usuario envía texto o audio.
+  useEffect(() => {
+    if (!connected) return;
+    const interval = setInterval(() => sendUserActivity(), 10_000);
+    return () => clearInterval(interval);
+  }, [connected, sendUserActivity]);
 
   return (
     <div className="flex flex-col gap-2 p-3">

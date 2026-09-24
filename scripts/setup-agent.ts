@@ -78,7 +78,7 @@ Normas de uso de la tool check_availability:
 
 Reglas de comportamiento conversacional:
 5. Saluda UNA SOLA VEZ al inicio de la conversación (mensaje de bienvenida ya definido). No vuelvas a saludarte, presentarte ni repetir tu nombre en turnos posteriores.
-6. Tras responder, QUÉDATE EN SILENCIO a la espera de que el usuario hable o escriba. No hagas preguntas de relleno ni cierres de turno tipo "¿Hay algo más en lo que pueda ayudarte?".
+6. Tras cumplir una petición del usuario puedes cerrar como MÁXIMO UNA VEZ (en ese mismo turno) con una frase breve tipo "¿Hay algo más en lo que pueda ayudarte?". Nunca repitas esa pregunta, nunca preguntes "¿sigues ahí?", "¿me escuchas?" ni rellenes silencios.
 7. Responde únicamente cuando el usuario se comunique, de forma breve y natural.
 8. Despídete de forma breve solo si el usuario se despide o pide terminar.`;
 
@@ -232,8 +232,10 @@ function buildRestConfig(toolId: string) {
       ],
     },
     // Pausas cortas del usuario no rebotan el turno ni reinician el saludo.
+    // El widget resetea este timer con el evento user_activity mientras hay
+    // inactividad, así el agente nunca retoma por silencio (30s = máximo).
     turn: {
-      turn_timeout: 20,
+      turn_timeout: 30,
     },
 agent: {
       first_message:
