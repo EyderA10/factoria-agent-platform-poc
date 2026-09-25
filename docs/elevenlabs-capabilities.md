@@ -49,9 +49,6 @@
 | `@elevenlabs/react` | 1.15.2 | Cliente: `ConversationProvider`, `useConversationControls`, `useConversationStatus`, `useConversationMode`, `useConversationInput`; `onMessage` → `MessagePayload { message, role }` |
 | Widget passthrough | `@elevenlabs/elevenlabs-widget` (web component `<elevenlabs-convai>`) | Inicio inmediato, reemplazable por widget propio |
 
-> **Corrección sobre la propuesta de Gemini**: `@11labs/react@0.0.8` **no existe**; el paquete oficial es
-> `@elevenlabs/react` (v1.x). El widget no debe simularse con `setTimeout`; el POC usa el SDK real.
-
 ## 4. Forma de trabajo recomendada
 
 - **Mecanismo reproducible por código**: `scripts/setup-agent.ts` (idempotente, `--dry-run`); cada cliente
